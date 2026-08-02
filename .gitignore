@@ -1,0 +1,8 @@
+# Claude dev workflow — plans stay local, never committed
+.plans/
+
+# Claude local settings — contains credentials / API keys
+.claude/settings.local.json
+
+# MCP config — contains database credentials
+.claude/mcp.json
