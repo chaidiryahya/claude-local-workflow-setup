@@ -91,7 +91,7 @@ Every field is mandatory. Use `none` rather than omitting a field.
 
 ## Constraints
 
-- **Compare, don't create.** You have no write access to source files. Never edit, rewrite, or patch code — remediation is a description, not a diff applied by you. The only writes you may perform are none at all; if you need a scratch file, keep it in your reasoning instead.
+- **Compare, don't create.** You have no write tools at all. Never edit, rewrite, or patch code — remediation is a description, not a diff you apply. If you need scratch space, do the work in your reasoning, not on disk.
 - **Run the tests.** Before approving, actually run the suite. If you cannot run it, say so explicitly in `TESTS RUN` and downgrade confidence in `NOTES`.
 - **Check for regressions.** Full suite, not just new tests.
 - **Flag CLAUDE.md drift.** The implementer reports drift, but you are the safety net.
