@@ -54,6 +54,8 @@ claude-workflow-setup/
 - **Agent files**: Markdown with YAML frontmatter (`name`, `description`, `model`, `tools`). `tools` is scoped per role — the reviewer is deliberately read-only.
 - **Model selection**: Opus for planning/review, Sonnet for implementation, Haiku for finalization
 - **Entry point**: `/dev <request>`. Do not invoke agents ad hoc to run a full cycle — that loses the review loop and the human checkpoints.
+- **MR/PR creation**: the finalizer detects `gh` → `GITHUB_TOKEN`/`GH_TOKEN` → compare link (GitHub), or `glab` → `GITLAB_TOKEN` (GitLab). Missing setup is reported as `MR_SETUP: missing`, not a failure; the orchestrator offers setup help.
+- **Secrets**: tokens are detected by presence only (`${VAR:+set}`), never echoed. `settings.local.json` and `mcp.json` are git-ignored.
 - **Output Contract**: every agent ends with a parseable report block. Changing an agent's fields means changing the orchestrator's parsing in `.claude/commands/dev.md`.
 - **Plan format**: `.plans/YYYYMMDD-slug.md` — git-ignored, local only
 - **Summary format**: `.ai-logs/YYYYMMDD-slug.md` — committed to repo, same slug as the plan

@@ -27,7 +27,7 @@ Because the orchestrator holds the loop, it also holds the decisions: it resolve
 | **Planner** | Opus | Read, Write (`.plans/` only), Grep, Glob, web | Produces a phased plan or declares "no plan needed" |
 | **Implementer** | Sonnet | Read, Write, Edit, Grep, Glob, Bash | Executes a phase, writes and runs unit tests |
 | **Reviewer** | Opus | Read, Grep, Glob, Bash | Read-only quality gate; reports findings, never edits |
-| **Finalizer** | Haiku | Read, Write, Grep, Glob, Bash | Summary → branch → commit → push |
+| **Finalizer** | Haiku | Read, Write, Grep, Glob, Bash | Summary → branch → commit → push → open MR/PR |
 
 The reviewer has no edit tools on purpose. It compares and reports; the orchestrator sends the fix list back to the implementer.
 
@@ -56,6 +56,29 @@ OPEN QUESTIONS:
 ### Review Loop
 
 The reviewer checks every planned task for presence, fidelity, completeness, tests, bugs, side effects, and `CLAUDE.md` drift. Findings are categorized (`MISMATCH`, `GAP`, `BUG`, `TEST_GAP`, `STRUCTURE`) and returned as a remediation list the implementer can act on without guessing. The orchestrator caps this at **3 rounds**, then stops and escalates to you.
+
+### MR / PR creation
+
+The finalizer opens the merge request after pushing, using whatever is available:
+
+| Remote | Detection order |
+|---|---|
+| GitHub | `gh` CLI → `GITHUB_TOKEN` / `GH_TOKEN` via REST API → compare link |
+| GitLab | `glab` CLI → `GITLAB_TOKEN` via REST API → manual |
+
+If neither is set up, the finalizer still pushes and reports `MR_SETUP: missing`. The orchestrator then asks whether you want to set up tooling now, use a token, or just get the compare link — the pipeline does **not** fail at that point.
+
+**Token setup (no CLI install needed):**
+
+```bash
+# ~/.zshrc — do not commit this
+export GITHUB_TOKEN="ghp_..."     # classic PAT, `repo` scope
+# or fine-grained PAT: Contents: read + Pull requests: read and write
+```
+
+Restart the shell so Claude Code inherits it. Tokens are detected by presence only — they are never echoed into a report, commit, or log. A leaked token should be rotated immediately.
+
+**CLI alternative:** `brew install gh && gh auth login` stores the credential in the macOS keychain and also gets you `gh pr view`, `gh pr checks`, and `gh pr diff` later on.
 
 ## Directory Structure
 
@@ -99,7 +122,7 @@ The orchestrator will:
 1. Spawn the planner (or skip it, for a trivial request).
 2. Bring you the plan outline and any open questions, then ask whether to hand it off.
 3. Drive implement → review rounds until approved.
-4. Ask before finalizing, since that pushes to your remote.
+4. Ask before finalizing, since that pushes to your remote and opens the MR/PR.
 
 ### Running a single agent
 
@@ -138,6 +161,8 @@ cp .claude/mcp.json.tmpl .claude/mcp.json
 | Agent returns malformed report | Its Output Contract was edited | Keep the contract block in sync with the parser in `dev.md` |
 | Loop runs past 3 rounds | Orchestrator didn't stop | Check the Stage 3 rules in `dev.md` |
 | Finalizer commits unrelated files | Pre-existing local changes | The finalizer should refuse; stage explicitly |
+| `MR_SETUP: missing` after finalize | No `gh` and no token | Set `GITHUB_TOKEN` or install `gh` — see [MR / PR creation](#mr--pr-creation) |
+| MR API returns 401/403 | Token expired or missing scope | Rotate the PAT and check its scopes |
 
 ## License
 

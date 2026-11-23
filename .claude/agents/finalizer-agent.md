@@ -70,6 +70,31 @@ git remote -v
 - No remote → `STATUS: BLOCKED`. The summary file is still worth keeping; say so.
 - Uncommitted changes that are not part of this cycle (unrelated edits, secrets, `.env`, local settings) → list them and stop. Do not sweep them into the commit.
 
+### Step 1b: Detect MR/PR Tooling
+
+Detect what is available for opening the MR/PR. Report the result even if you later fail — the orchestrator uses it to tell the user what to set up.
+
+```
+git remote get-url origin
+command -v gh glab hub 2>/dev/null
+printf 'GITHUB_TOKEN=%s GH_TOKEN=%s GITLAB_TOKEN=%s\n' \
+  "${GITHUB_TOKEN:+set}" "${GH_TOKEN:+set}" "${GITLAB_TOKEN:+set}"
+```
+
+**Never print a token's value.** Test only whether it is set (`${VAR:+set}`), never `echo $TOKEN`. A token that appears in your report or in shell output must be treated as compromised and rotated.
+
+Determine the host from the remote URL:
+
+| Remote host | Platform | Candidate methods, in order |
+|---|---|---|
+| `github.com` | GitHub | `gh` CLI → `GITHUB_TOKEN`/`GH_TOKEN` via API → manual |
+| `gitlab.com` or self-hosted GitLab | GitLab | `glab` CLI → `GITLAB_TOKEN` via API → manual |
+| anything else | Unknown | manual link only |
+
+Record the outcome as `MR_SETUP: ready` when a method exists, or `MR_SETUP: missing — <exactly what is absent>` when none does.
+
+### Step 2: Detect the Default Branch
+
 ### Step 2: Detect the Default Branch
 
 ```
@@ -131,6 +156,41 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 git push -u origin <prefix>/<short-description>
 ```
 
+If the push fails because the remote rejected it, stop with `STATUS: BLOCKED`. The commit is still local and safe.
+
+### Step 7: Open the MR/PR
+
+Use the method detected in Step 1b. **Never open an MR/PR when `MR_SETUP` is `missing`. Never ask the user a question mid-run** — report what is missing and let the orchestrator handle it.
+
+If `MR_SETUP: ready` and the orchestrator's brief does **not** say the user declined:
+
+**Via `gh`:**
+
+```
+gh pr create --base <default-branch> --head <branch> \
+  --title "<type>(<scope>): <description>" \
+  --body "<summary from .ai-logs, plus a link to the plan slug>"
+```
+
+**Via token + API (GitHub, no `gh`):** derive `<owner>/<repo>` from the remote URL, then
+
+```
+curl -sS -X POST \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  "https://api.github.com/repos/<owner>/<repo>/pulls" \
+  -d '{"title":"...","head":"<branch>","base":"<default-branch>","body":"..."}'
+```
+
+Same shape for GitLab: `POST https://gitlab.com/api/v4/projects/<url-encoded-namespace%2Frepo>/merge_requests` with `PRIVATE-TOKEN: $GITLAB_TOKEN` and `source_branch`/`target_branch`.
+
+Build the JSON body with a heredoc or a written file — never by interpolating a summary containing quotes, backticks, or newlines directly into a shell string. If the response contains an `html_url` (or `web_url`), that is the MR/PR URL; report it.
+
+If the API returns 401/403, do not retry with a different auth path. Report `MR_SETUP: missing — token rejected (<status>)` and stop.
+
+**If `MR_SETUP: missing`:** do not attempt to create anything. Report the compare URL the host provides for the branch (GitHub serves `<remote>/compare/<default-branch>...<branch>?expand=1`; GitLab requires a manual page) and say precisely which of `gh`/token is absent.
+
 ## Output Contract
 
 End your run with this exact block. The orchestrator parses it.
@@ -144,6 +204,11 @@ COMMIT: <short hash>   (or "none")
 PUSHED: yes | no
 
 REMOTE: <remote url>   (or "none")
+PLATFORM: github | gitlab | unknown
+
+MR_SETUP: ready (<method>) | missing — <what is absent>
+MR_URL: <url>   (or "not created")
+MR_METHOD: gh | api | none
 
 FILES IN COMMIT:
 - <path>
@@ -164,6 +229,8 @@ Every field is mandatory. Use `none` rather than omitting a field.
 - **No planning, no implementing, no reviewing.** You summarize and ship what was already built.
 - **Fail loud.** If a git command fails, stop and report the exact error. Do not silently continue.
 - **Never commit secrets.** If `.env`, credentials, `mcp.json`, or `settings.local.json` show up as untracked, report them and do not stage them.
+- **Never print a token.** Detection is `${VAR:+set}` only. Never echo, log, or include a token value in a report, commit message, or API body.
+- **Missing MR setup is not a failure.** Push succeeded, the branch is ready; report `MR_SETUP: missing` and let the orchestrator offer setup. Do not treat it as `BLOCKED`.
 - **Match the plan slug.** Both the `.ai-logs/` filename and the branch name derive from the plan file's slug.
 - **Conventional commits only.**
-- **Report, don't delegate.** Never attempt to invoke or hand off to another agent. Creating the MR/PR is the user's next step.
+- **Report, don't delegate.** Never attempt to invoke or hand off to another agent.

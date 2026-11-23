@@ -1,7 +1,7 @@
 ---
 description: Orchestrate the planner → implementer → reviewer → finalizer pipeline
 argument-hint: <request | ticket ref | path to spec PDF>
-allowed-tools: Agent, Read, Write, Edit, Bash, Grep, Glob
+allowed-tools: Agent, Read, Write, Edit, Bash, Grep, Glob, AskUserQuestion
 ---
 
 # Development Pipeline Orchestrator
@@ -27,7 +27,7 @@ $ARGUMENTS
 | 1 | Plan | `planner-agent` | Request verbatim, plus paths to any specs/tickets | `STATUS`, plan path, open questions, CLAUDE.md updates |
 | 2 | Implement | `implementer-agent` | Plan path + phase scope (+ remediation list on later rounds) | `STATUS`, files changed, test results, deviations |
 | 3 | Review | `reviewer-agent` | Plan path + implementer report + round number | `VERDICT`, categorized findings, test results |
-| 4 | Finalize | `finalizer-agent` | Plan path + implementer and reviewer reports | Summary path, branch, commit, push result |
+| 4 | Finalize | `finalizer-agent` | Plan path + implementer and reviewer reports + whether to open the MR/PR | Summary path, branch, commit, push and MR result |
 
 ### Stage 1 — Plan
 
@@ -96,6 +96,7 @@ Spawn `finalizer-agent`:
 
 ```
 You are finalizer-agent. Plan: .plans/<file>.md. Review approved after <N> round(s).
+Open the MR/PR after pushing: yes
 
 Implementer report:
 <verbatim>
@@ -105,6 +106,25 @@ Reviewer report:
 
 Return your report exactly per your Output Contract.
 ```
+
+Then handle the result:
+
+| Report says | You do |
+|---|---|
+| `MR_URL` present | Give the user the link and the staged-report summary |
+| `MR_SETUP: missing` | Go to **MR setup help** below |
+| `MR_URL: not created` and user had declined | Say the branch is pushed and give the compare link |
+| `STATUS: BLOCKED` | Report the failing step and error verbatim; the branch may still be local |
+
+### MR setup help
+
+When the finalizer reports `MR_SETUP: missing`, the work is **done and pushed** — only the MR is outstanding. Do not frame this as a failure. Ask the user with `AskUserQuestion`, offering:
+
+1. **Set it up now** — install and authenticate the CLI for the detected platform (`gh auth login` for GitHub, `glab auth login` for GitLab). Tell them it is interactive and to run it themselves with `! gh auth login` so the output lands in the conversation. Then you can create the MR from the compare link or with one follow-up call.
+2. **Use a token instead** — a personal access token in the environment. For GitHub: classic PAT with `repo` scope, exported as `GITHUB_TOKEN` in `~/.zshrc`; or fine-grained with *Contents: read* + *Pull requests: read and write*. Tell them **not** to paste the token into the conversation.
+3. **Skip the MR** — give them the compare URL so they can click through.
+
+Whatever they choose, tell them where things stand (branch pushed, commit hash) and never leave them believing the pipeline failed at finalize. Never open the MR without their answer if `MR_SETUP` was missing, and never attempt setup on their behalf without confirming — installing tools and storing credentials is their decision.
 
 ## Wrap-up
 
@@ -120,7 +140,8 @@ Report to the user in this shape:
 - Branch:      <prefix>/<slug>
 - Commit:      <hash>
 - Pushed:      <yes — <remote>> | <no — reason>
-- Next step:   open a PR/MR from this branch
+- MR/PR:       <url> | not created (<why>)
+- Next step:   <open a PR/MR from this branch> | <nothing — MR is open>
 ```
 
 If the pipeline stopped early, say exactly where it stopped, why, and what the user must decide.
