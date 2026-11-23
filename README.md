@@ -80,6 +80,51 @@ Restart the shell so Claude Code inherits it. Tokens are detected by presence on
 
 **CLI alternative:** `brew install gh && gh auth login` stores the credential in the macOS keychain and also gets you `gh pr view`, `gh pr checks`, and `gh pr diff` later on.
 
+## End-to-End Testing Agents
+
+Two standalone agents verify a test case against an implementation. They are **not** part of the `/dev` pipeline and have no slash command — ask for them by name in a prompt and the main thread spawns the right one.
+
+```
+"run the static e2e check for PROJ-123"
+"verify PROJ-123 against staging"
+```
+
+| | `e2e-static-agent` | `e2e-runtime-agent` |
+|---|---|---|
+| **Network** | none, ever | real HTTP to the URL you supply |
+| **Tools** | Read, Grep, Glob | Read, Grep, Glob, Bash (curl), MCP DB |
+| **Method** | trace route → middleware → handler → service → repo → serializer | execute your request, capture status/headers/body, compare |
+| **Database** | reads schema and models statically | optional read-only `SELECT` via MCP |
+| **Verdicts** | `MATCH` / `MISMATCH` / `NOT_FOUND` / `UNVERIFIABLE` | `PASS` / `FAIL` / `SKIPPED` / `UNVERIFIED` |
+
+### How a run works
+
+1. **You give the test case** — a PDF path, a ticket key, or criteria pasted inline.
+2. **The main thread fetches it** — tickets come through the connected MCP server; PDFs are read directly. Nothing is fetched by the agent.
+3. **It writes a normalized test case** to `.test-reports/YYYYMMDD-slug-testcase.md` — endpoint, method, expected request, rules, expected response.
+4. **It spawns the agent** with that path, and the agent returns a report.
+
+The ticket lookup happens in the main thread on purpose: `e2e-static-agent` has no network tools, so it cannot be the one calling Jira.
+
+**Ticket platforms** need an MCP server in `.claude/mcp.json`. It ships with placeholder Postgres/MySQL only — add your Jira, Trello, ClickUp, or Asana server there first, or pass a PDF/inline criteria instead.
+
+### Static verification is not proof
+
+`e2e-static-agent` reads code; it does not run it. Middleware ordering, framework serialization, DI wiring, and database triggers are invisible to it. Anything it cannot settle from the source is reported `UNVERIFIABLE` with a note on what would settle it — never silently upgraded to `MATCH` because the code looks right. Every `MATCH`/`MISMATCH` carries a `file:line`.
+
+For proof about runtime behavior, use `e2e-runtime-agent`.
+
+### Runtime safety
+
+- **Read-only by default.** `GET` and `HEAD` only. `POST`/`PUT`/`PATCH`/`DELETE` require you to grant `ALLOW_WRITES` for that run — a curl containing a POST is not itself permission.
+- **One target.** The agent stays on the base URL you name and never redirects off that host.
+- **No credential leakage.** Tokens are substituted from environment variables and never echoed into a command, report, or file. A leaked token should be rotated.
+- **DB checks are read-only** — `SELECT`/`SHOW`/`EXPLAIN` only, and they reflect state at query time, not at request time.
+
+### Reports
+
+Written to `.test-reports/` (git-ignored). Before writing, the agent asks whether you want the report sent to Slack or another platform as well; if not, it stays a local file. Captured responses are redacted — no tokens, cookies, or real personal data.
+
 ## Directory Structure
 
 ```
@@ -91,15 +136,22 @@ project/
 │       ├── planner-agent.md
 │       ├── implementer-agent.md
 │       ├── reviewer-agent.md
-│       └── finalizer-agent.md
+│       ├── finalizer-agent.md
+│       ├── e2e-static-agent.md  # Standalone — code-path verification
+│       └── e2e-runtime-agent.md # Standalone — live request verification
 ├── .plans/                      # Git-ignored — plans stay local
 │   └── YYYYMMDD-slug.md
+├── .test-reports/               # Git-ignored — E2E evidence stays local
+│   ├── YYYYMMDD-slug-testcase.md
+│   ├── YYYYMMDD-slug-static.md
+│   └── YYYYMMDD-slug-runtime.md
 ├── .ai-logs/                    # Committed — AI development summaries
 │   └── YYYYMMDD-slug.md
 └── .gitignore
 ```
 
 - **`.plans/`** — local only. The planner's output; the shared source of truth for implementation and review.
+- **`.test-reports/`** — local only. Normalized test cases and verification reports.
 - **`.ai-logs/`** — committed. TL;DR summaries and lessons learned from each cycle.
 
 ## How to Use
@@ -137,7 +189,7 @@ For stack-specific behavior, add instructions to your project's `CLAUDE.md`.
 ## Setup
 
 1. Copy `.claude/commands/`, `.claude/agents/`, `.gitignore`, and `CLAUDE.md` into any project.
-2. Create `.plans/` (local, git-ignored) and `.ai-logs/` with a `.gitkeep`.
+2. Create `.plans/` and `.test-reports/` (local, git-ignored) and `.ai-logs/` with a `.gitkeep`.
 3. Optionally copy `.claude/mcp.json.tmpl` → `.claude/mcp.json` and fill in credentials.
 
 No other configuration is needed — `/dev` works immediately.
@@ -163,6 +215,9 @@ cp .claude/mcp.json.tmpl .claude/mcp.json
 | Finalizer commits unrelated files | Pre-existing local changes | The finalizer should refuse; stage explicitly |
 | `MR_SETUP: missing` after finalize | No `gh` and no token | Set `GITHUB_TOKEN` or install `gh` — see [MR / PR creation](#mr--pr-creation) |
 | MR API returns 401/403 | Token expired or missing scope | Rotate the PAT and check its scopes |
+| E2E agent returns `NEEDS_INPUT` | Test case, curl, or base URL missing | Supply what the report asks for and re-run |
+| E2E runtime refuses a request | Mutating verb without `ALLOW_WRITES` | Grant writes explicitly for that run, or test read paths only |
+| Ticket lookup fails | No ticket MCP configured | Add a Jira/Trello/ClickUp/Asana server, or pass a PDF |
 
 ## License
 

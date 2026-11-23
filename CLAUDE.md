@@ -25,6 +25,22 @@ User ──▶ /dev (orchestrator, main thread) ──▶ planner-agent  ──r
 - Handoffs are **paths + short reports**, never pasted plan bodies.
 - Only the orchestrator writes `CLAUDE.md`; agents propose edits in their report instead.
 
+## Testing Agents (outside the /dev pipeline)
+
+Two standalone agents verify a test case against an implementation. They are **not** part of the `/dev` flow and have **no slash command** — they are spawned when the user's prompt asks for end-to-end verification. As with every subagent, they report back and cannot ask the user; the caller does intake.
+
+| Agent | Network | Purpose |
+|---|---|---|
+| `e2e-static-agent` | **none, ever** | Traces the code path and compares request contract, business logic, and response shape against the test case. Read-only; no `Bash`. |
+| `e2e-runtime-agent` | live API | Executes the real request and compares the live response. Read-only verbs by default; optional MCP database checks. |
+
+**Intake belongs to the caller, not the agents.** The main thread fetches the ticket (via MCP) or reads the PDF, normalizes it to `.test-reports/YYYYMMDD-slug-testcase.md`, and passes that path to the agent. This is what keeps `e2e-static-agent` provably network-free.
+
+- **Static verdicts**: `MATCH`, `MISMATCH`, `NOT_FOUND`, `UNVERIFIABLE`. Anything decided at runtime outside the visible source is `UNVERIFIABLE`, never an optimistic `MATCH`.
+- **Runtime verdicts**: `PASS`, `FAIL`, `SKIPPED`, `UNVERIFIED`.
+- **Write safety**: `e2e-runtime-agent` sends only `GET`/`HEAD` unless the brief carries `ALLOW_WRITES: yes` for that run. A curl alone is not permission.
+- **Reports** go to `.test-reports/` (git-ignored). Ask the user first whether they want the report sent to Slack or another platform; default to the local file only.
+
 ## Directory Structure
 
 ```
@@ -38,12 +54,15 @@ claude-workflow-setup/
 │   │   ├── planner-agent.md     # Opus — dev planning, read-only except .plans/
 │   │   ├── implementer-agent.md # Sonnet — plan execution + unit tests
 │   │   ├── reviewer-agent.md    # Opus — read-only quality gate, no code edits
-│   │   └── finalizer-agent.md   # Haiku — summary, branch, commit, push
+│   │   ├── finalizer-agent.md   # Haiku — summary, branch, commit, push
+│   │   ├── e2e-static-agent.md  # Opus — code-path verification, zero network
+│   │   └── e2e-runtime-agent.md # Opus — live request verification, read-only default
 │   ├── settings.json            # Project-level Claude settings
 │   ├── settings.local.json      # Local overrides (git-ignored)
 │   ├── mcp.json                 # MCP server configs (git-ignored — credentials)
 │   └── mcp.json.tmpl            # MCP config template (committed)
 ├── .plans/                      # Git-ignored — development plans
+├── .test-reports/               # Git-ignored — E2E verification evidence
 ├── .gitignore
 ├── CLAUDE.md                    # This file — fast project index for agents
 └── README.md                    # Human-facing workflow documentation
@@ -59,6 +78,7 @@ claude-workflow-setup/
 - **Output Contract**: every agent ends with a parseable report block. Changing an agent's fields means changing the orchestrator's parsing in `.claude/commands/dev.md`.
 - **Plan format**: `.plans/YYYYMMDD-slug.md` — git-ignored, local only
 - **Summary format**: `.ai-logs/YYYYMMDD-slug.md` — committed to repo, same slug as the plan
+- **Test case / report format**: `.test-reports/YYYYMMDD-slug-{testcase,static,runtime}.md` — git-ignored, local only
 - **Branch naming**: `<prefix>/<short-description>` (feat/, fix/, docs/, chore/, refactor/, test/, perf/)
 - **MCP setup**: Copy `.claude/mcp.json.tmpl` → `.claude/mcp.json`, fill in credentials. `mcp.json` is git-ignored.
 
@@ -70,5 +90,5 @@ claude-workflow-setup/
 
 ## Last Updated
 
-- **Date**: 2026-11-23
-- **By**: Orchestrator/report-back refactor
+- **Date**: 2026-11-24
+- **By**: Added standalone E2E verification agents
