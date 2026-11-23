@@ -106,7 +106,7 @@ Two standalone agents verify a test case against an implementation. They are **n
 
 The ticket lookup happens in the main thread on purpose: `e2e-static-agent` has no network tools, so it cannot be the one calling Jira.
 
-**Ticket platforms** need an MCP server in `.claude/mcp.json`. It ships with placeholder Postgres/MySQL only — add your Jira, Trello, ClickUp, or Asana server there first, or pass a PDF/inline criteria instead.
+**Ticket platforms** need an MCP server in `.claude/mcp.json`. The template ships entries for Jira, Trello, ClickUp, and Asana — delete the ones you don't use, fill in the token entries you keep, or pass a PDF/inline criteria instead. See [Ticket Platforms](#ticket-platforms-for-e2e-test-case-intake).
 
 ### Static verification is not proof
 
@@ -204,6 +204,29 @@ cp .claude/mcp.json.tmpl .claude/mcp.json
 ```
 
 `.claude/mcp.json` is git-ignored. Until you fill it in, no MCP server is connected — the planner's ticket lookups and the implementer's database access need it.
+
+### Ticket Platforms (for E2E test-case intake)
+
+The template also carries entries for the four supported ticket platforms. **Delete the ones you don't use** — every entry spawns a process on startup, and credentials are real.
+
+| Server | How it authenticates | Required values |
+|---|---|---|
+| `jira` | OAuth via `mcp-remote` to Atlassian's hosted endpoint — first run opens a browser | none in the file |
+| `trello` | API key + token | `TRELLO_API_KEY`, `TRELLO_TOKEN`, `TRELLO_BOARD_ID` |
+| `clickup` | Personal API token | `CLICKUP_API_KEY`, `CLICKUP_TEAM_ID` |
+| `asana` | Personal access token | `ASANA_ACCESS_TOKEN` |
+
+Jira needs no credential in the file: `mcp-remote` proxies to `https://mcp.atlassian.com/v1/sse` and completes an OAuth flow in the browser on first use. The other three take tokens in the `env` block — keep them in `.claude/mcp.json`, which is git-ignored, never in `.mcp.json.tmpl`.
+
+**Licensing note:** the Jira endpoint is Atlassian's own; `mcp-server-trello` and `asana-mcp` are MIT. `@taazkareem/clickup-mcp-server` is **proprietary** — fine for local use, but check its terms before redistributing this template with that entry enabled.
+
+**If a ticket lookup fails**, confirm the server starts at all before assuming the agent is at fault:
+
+```bash
+npx -y mcp-server-trello          # should print a startup line, not an error
+```
+
+A silent hang usually means a missing env var; the process waits rather than exiting.
 
 ## Troubleshooting
 

@@ -7,7 +7,7 @@ This file provides a fast structural overview of the project for Claude Code age
 - **Project**: claude-workflow-setup
 - **Purpose**: Reusable, stack-agnostic development workflow powered by Claude Code agents
 - **Stack**: Configuration-only (YAML/JSON/Markdown frontmatter). No runtime code.
-- **MCP**: Template with Postgres + MySQL entries at `.claude/mcp.json.tmpl`. No servers are connected until you copy it to `.claude/mcp.json` and fill in real credentials.
+- **MCP**: Template at `.claude/mcp.json.tmpl` with Postgres, MySQL, and four ticket platforms (Jira, Trello, ClickUp, Asana). No servers are connected until you copy it to `.claude/mcp.json` and fill in real credentials. Jira uses Atlassian's hosted OAuth endpoint; the others take tokens in `env`.
 
 ## Architecture: Orchestrator + Report-Back Workers
 
