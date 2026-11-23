@@ -1,136 +1,169 @@
 # Claude Development Workflow
 
-A reusable, stack-agnostic development workflow powered by Claude Code agents. Designed to work with any language — Go, JavaScript, Python, or anything else.
+A reusable, stack-agnostic development workflow powered by Claude Code agents. Works with any language — Go, JavaScript, Python, or anything else.
 
-## Overview
+## How It Works
 
-Four specialized agents form a complete development pipeline:
+One orchestrator, four workers. You talk to the orchestrator; the orchestrator talks to the agents. **Subagents never talk to each other and never talk to you** — each one gets a scoped brief, does its job, and returns a structured report.
 
 ```
-User Request
-    │
-    ▼
-┌─────────────────────────┐
-│  PLANNER (Opus)         │  Comprehensive planning from PDFs, MCP tickets, or prompts.
-│  Size detect → Plan     │  Asks clarifying questions. Breaks large work into phases.
-│  → .plans/YYYYMMDD.md   │
-└──────────┬──────────────┘
-           │
-           ▼
-┌─────────────────────────┐
-│  IMPLEMENTER (Sonnet)   │  Executes the plan phase by phase.
-│  Code + unit tests      │  No planning — follows the plan exactly.
-└──────────┬──────────────┘
-           │
-           ▼
-┌─────────────────────────┐     ┌─────────────────────┐
-│  REVIEWER (Opus)        │────▶│ Remediation list    │
-│  Plan vs implementation │     │ → back to IMPLEMENTER│
-│  Gaps / bugs / tests    │     └─────────────────────┘
-└──────────┬──────────────┘     (max 3 rounds)
-           │ APPROVED
-           ▼
-┌─────────────────────────┐
-│  FINALIZER (Haiku)      │  Summary → .ai-logs/
-│  Branch → commit → push │  Ready for PR/MR
-└─────────────────────────┘
+You ──▶ ORCHESTRATOR (/dev) ──▶ planner ──▶ report
+                       │                     │
+                       │  asks you if the plan needs review
+                       │                     │
+                       ├──▶ implementer ──▶ report
+                       ├──▶ reviewer ─────▶ report ──▶ fix loop (max 3)
+                       ├──▶ implementer ──▶ report (only if findings)
+                       └──▶ finalizer ────▶ report ──▶ summary + branch + push
 ```
+
+Because the orchestrator holds the loop, it also holds the decisions: it resolves what it can from context, and asks you only what it genuinely cannot answer (ambiguous requirements, plan approval, whether to push).
 
 ## Agents
 
-| Agent | Model | File | Role |
+| Agent | Model | Tools | Role |
 |---|---|---|---|
-| **Planner** | Opus | [planner-agent.md](.claude/agents/planner-agent.md) | Analyze requirements, ask clarifying questions, produce phased plan |
-| **Implementer** | Sonnet | [implementer-agent.md](.claude/agents/implementer-agent.md) | Execute plan, write code, write unit tests |
-| **Reviewer** | Opus | [reviewer-agent.md](.claude/agents/reviewer-agent.md) | Compare plan vs implementation, find gaps/bugs, re-spawn implementer |
-| **Finalizer** | Haiku | [finalizer-agent.md](.claude/agents/finalizer-agent.md) | Write TL;DR summary, create branch, commit, push |
+| **Orchestrator** [`/dev`](.claude/commands/dev.md) | session model | all | Drives the pipeline, relays reports, owns human checkpoints and `CLAUDE.md` |
+| **Planner** | Opus | Read, Write (`.plans/` only), Grep, Glob, web | Produces a phased plan or declares "no plan needed" |
+| **Implementer** | Sonnet | Read, Write, Edit, Grep, Glob, Bash | Executes a phase, writes and runs unit tests |
+| **Reviewer** | Opus | Read, Grep, Glob, Bash | Read-only quality gate; reports findings, never edits |
+| **Finalizer** | Haiku | Read, Write, Grep, Glob, Bash | Summary → branch → commit → push → open MR/PR |
+
+The reviewer has no edit tools on purpose. It compares and reports; the orchestrator sends the fix list back to the implementer.
+
+### The Report Contract
+
+Every agent ends with a parseable block, and the orchestrator is what reads it. For example:
+
+```
+STATUS: PLAN_READY
+PLAN_PATH: .plans/20261123-user-auth.md
+SIZE: L
+PHASES: 5
+OPEN QUESTIONS:
+1. "Fast response" — <100ms p95 needs a cache; <500ms does not. Which?
+```
+
+`STATUS: BLOCKED` plus a `BLOCKER` field is how an agent escalates. The orchestrator either answers from context or brings the question to you.
 
 ### Planner in Detail
 
-- Accepts: PDFs (technical docs), MCP tickets (Jira/ClickUp/Trello), direct prompts
-- **Size detection**: XS tasks skip the plan entirely → straight to implementer
-- **Decomposition**: S/M/L/XL sizing with concrete phase counts
-- **Human checkpoints**: asks whether to review the plan before handing off
-- Output: structured plan written to `.plans/YYYYMMDD-slug.md`
+- Accepts PDFs, MCP ticket references, and plain prompts — all passed as paths by the orchestrator.
+- **Size detection**: XS requests skip the plan entirely and go straight to the implementer.
+- **Phasing**: S/M/L/XL with phase counts; every phase is ~S-sized and ends green.
+- **Ambiguity**: the planner cannot ask you anything, so unresolved questions come back as a structured list you answer in one pass.
 
-### Reviewer Loop
+### Review Loop
 
-The reviewer compares the implementation against the plan. If issues are found, it produces a concrete **remediation list** and re-spawns the implementer. This loops until clean (max 3 rounds, then escalates).
+The reviewer checks every planned task for presence, fidelity, completeness, tests, bugs, side effects, and `CLAUDE.md` drift. Findings are categorized (`MISMATCH`, `GAP`, `BUG`, `TEST_GAP`, `STRUCTURE`) and returned as a remediation list the implementer can act on without guessing. The orchestrator caps this at **3 rounds**, then stops and escalates to you.
+
+### MR / PR creation
+
+The finalizer opens the merge request after pushing, using whatever is available:
+
+| Remote | Detection order |
+|---|---|
+| GitHub | `gh` CLI → `GITHUB_TOKEN` / `GH_TOKEN` via REST API → compare link |
+| GitLab | `glab` CLI → `GITLAB_TOKEN` via REST API → manual |
+
+If neither is set up, the finalizer still pushes and reports `MR_SETUP: missing`. The orchestrator then asks whether you want to set up tooling now, use a token, or just get the compare link — the pipeline does **not** fail at that point.
+
+**Token setup (no CLI install needed):**
+
+```bash
+# ~/.zshrc — do not commit this
+export GITHUB_TOKEN="ghp_..."     # classic PAT, `repo` scope
+# or fine-grained PAT: Contents: read + Pull requests: read and write
+```
+
+Restart the shell so Claude Code inherits it. Tokens are detected by presence only — they are never echoed into a report, commit, or log. A leaked token should be rotated immediately.
+
+**CLI alternative:** `brew install gh && gh auth login` stores the credential in the macOS keychain and also gets you `gh pr view`, `gh pr checks`, and `gh pr diff` later on.
 
 ## Directory Structure
 
 ```
 project/
 ├── .claude/
+│   ├── commands/
+│   │   └── dev.md               # Orchestrator
 │   └── agents/
 │       ├── planner-agent.md
 │       ├── implementer-agent.md
 │       ├── reviewer-agent.md
 │       └── finalizer-agent.md
-├── .plans/              # Git-ignored — plans stay local
+├── .plans/                      # Git-ignored — plans stay local
 │   └── YYYYMMDD-slug.md
-├── .ai-logs/            # Committed — AI development summaries
+├── .ai-logs/                    # Committed — AI development summaries
 │   └── YYYYMMDD-slug.md
 └── .gitignore
 ```
 
-- **`.plans/`** — local only, never committed. Contains the planner's output.
-- **`.ai-logs/`** — committed to the repo. Contains TL;DR summaries and lessons learned from each development cycle.
+- **`.plans/`** — local only. The planner's output; the shared source of truth for implementation and review.
+- **`.ai-logs/`** — committed. TL;DR summaries and lessons learned from each cycle.
 
 ## How to Use
 
-### 1. Start with the Planner
-
-Describe what you want to build, or point the planner at a PDF or MCP ticket:
+### Run the pipeline
 
 ```
-/invoke planner-agent "Add user authentication with JWT and refresh tokens"
+/dev add user authentication with JWT and refresh tokens
 ```
 
-Or reference a ticket:
+Or point it at a spec or a ticket:
+
 ```
-/invoke planner-agent "Implement the changes from JIRA ticket PROJ-123"
+/dev implement .specs/checkout-flow.pdf
+/dev implement the changes from JIRA ticket PROJ-123
 ```
 
-### 2. Review the Plan (Optional)
+The orchestrator will:
 
-The planner will write the plan to `.plans/` and ask if you want to review. Take your time — this is the right moment to catch misunderstandings.
+1. Spawn the planner (or skip it, for a trivial request).
+2. Bring you the plan outline and any open questions, then ask whether to hand it off.
+3. Drive implement → review rounds until approved.
+4. Ask before finalizing, since that pushes to your remote and opens the MR/PR.
 
-### 3. Hand Off to the Implementer
+### Running a single agent
 
-Once the plan is approved, the implementer executes it phase by phase, writing code and unit tests.
-
-### 4. Reviewer Quality Gate
-
-The reviewer checks everything against the plan. If something is off, it tells the implementer exactly what to fix. This repeats until clean.
-
-### 5. Finalize
-
-The finalizer writes the summary to `.ai-logs/`, creates a conventional-commit branch, and pushes to remote. Create your PR/MR from there.
+The pipeline is the recommended path, but each agent can be invoked on its own when you only want one stage — asking for the planner by name, or naming the reviewer to check an existing branch. Note that a lone agent has no orchestrator: it cannot ask you anything, so it will return its report to the main conversation instead.
 
 ## Stack-Agnostic
 
-This workflow doesn't care what language you're using. The planner produces language-agnostic plans. The implementer adapts to whatever project conventions it finds. The reviewer checks against the plan, not language-specific rules.
+The workflow doesn't care what language you're using. The planner produces language-agnostic plans. The implementer adapts to the conventions it finds. The reviewer checks the plan and runs whatever test command the project uses.
 
 For stack-specific behavior, add instructions to your project's `CLAUDE.md`.
 
 ## Setup
 
-1. Copy `.claude/agents/`, `.gitignore`, `.plans/`, `.ai-logs/`, and `CLAUDE.md` into any project.
-2. Copy `.claude/mcp.json.tmpl` → `.claude/mcp.json` and fill in your database credentials (if using MCP).
-3. The agents will work immediately — no additional configuration needed.
+1. Copy `.claude/commands/`, `.claude/agents/`, `.gitignore`, and `CLAUDE.md` into any project.
+2. Create `.plans/` (local, git-ignored) and `.ai-logs/` with a `.gitkeep`.
+3. Optionally copy `.claude/mcp.json.tmpl` → `.claude/mcp.json` and fill in credentials.
+
+No other configuration is needed — `/dev` works immediately.
 
 ### MCP Database Connections
 
-PostgreSQL and MySQL MCP servers are pre-configured in the template:
+The template ships example PostgreSQL and MySQL entries:
 
 ```bash
 cp .claude/mcp.json.tmpl .claude/mcp.json
-# Edit .claude/mcp.json with your real credentials
+# Edit .claude/mcp.json with real credentials
 ```
 
-`mcp.json` is git-ignored — it never gets committed.
+`.claude/mcp.json` is git-ignored. Until you fill it in, no MCP server is connected — the planner's ticket lookups and the implementer's database access need it.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `/dev` not listed | Command file not in `.claude/commands/` | Check the path, restart the session |
+| Agent returns malformed report | Its Output Contract was edited | Keep the contract block in sync with the parser in `dev.md` |
+| Loop runs past 3 rounds | Orchestrator didn't stop | Check the Stage 3 rules in `dev.md` |
+| Finalizer commits unrelated files | Pre-existing local changes | The finalizer should refuse; stage explicitly |
+| `MR_SETUP: missing` after finalize | No `gh` and no token | Set `GITHUB_TOKEN` or install `gh` — see [MR / PR creation](#mr--pr-creation) |
+| MR API returns 401/403 | Token expired or missing scope | Rotate the PAT and check its scopes |
 
 ## License
 
-This workflow setup is free to use and modify for any project.
+Free to use and modify for any project.
