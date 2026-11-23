@@ -1,6 +1,9 @@
 # Claude dev workflow — plans stay local, never committed
 .plans/
 
+# Test reports — local verification evidence, never committed
+.test-reports/
+
 # Claude local settings — contains credentials / API keys
 .claude/settings.local.json
 
