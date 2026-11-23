@@ -196,7 +196,7 @@ No other configuration is needed — `/dev` works immediately.
 
 ### MCP Database Connections
 
-The template ships example PostgreSQL and MySQL entries:
+The template ships example PostgreSQL, MySQL, and Redis entries:
 
 ```bash
 cp .claude/mcp.json.tmpl .claude/mcp.json
@@ -204,6 +204,20 @@ cp .claude/mcp.json.tmpl .claude/mcp.json
 ```
 
 `.claude/mcp.json` is git-ignored. Until you fill it in, no MCP server is connected — the planner's ticket lookups and the implementer's database access need it.
+
+**Redis needs `uv` installed** — its server is the official Python `redis-mcp-server`, launched via `uvx`:
+
+```bash
+brew install uv
+```
+
+The connection string accepts the standard `redis://` and `rediss://` schemes:
+
+```
+redis://<user>:<password>@<host>:6379/0    # TLS: rediss://
+```
+
+Omit `<user>` and `<password>` for a local Redis with no auth. If you already use the npm package `@modelcontextprotocol/server-redis`, note that it is **deprecated** — this template deliberately uses Redis's own server instead.
 
 ### Ticket Platforms (for E2E test-case intake)
 

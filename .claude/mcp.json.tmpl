@@ -16,6 +16,16 @@
         "mysql://<user>:<password>@<host>:3306/<database>"
       ]
     },
+    "redis": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "redis-mcp-server@latest",
+        "redis-mcp-server",
+        "--url",
+        "redis://<user>:<password>@<host>:6379/0"
+      ]
+    },
     "jira": {
       "command": "npx",
       "args": ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"]
